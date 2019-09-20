@@ -95,80 +95,151 @@ namespace CircuitBreaker.Net
         {
             if (action == null) throw new ArgumentNullException("action");
 
-            var tokenSource = new CancellationTokenSource();
-
             Task task = null;
 
             try
             {
-                task = Task.Factory.StartNew(action, tokenSource.Token, TaskCreationOptions.None, _taskScheduler);
+                task = Task.Factory.StartNew(action, CancellationToken.None, TaskCreationOptions.None, _taskScheduler);
 
-                if (task.IsCompleted || task.Wait((int)timeout.TotalMilliseconds, tokenSource.Token))
+                if (task.Wait((int)timeout.TotalMilliseconds))
                 {
                     return;
                 }
-
-                if (task.Status == TaskStatus.Running)
-                {
-                    tokenSource.Cancel();
-                }
+            }
+            catch (AggregateException e)
+            {
+                throw new CircuitBreakerExecutionException(e.InnerException);
             }
             catch (Exception e)
             {
-                throw new CircuitBreakerOpenException(e);
+                throw new CircuitBreakerExecutionException(e);
             }
 
             if (task.IsFaulted)
-                throw new CircuitBreakerOpenException(task.Exception);
+                throw new CircuitBreakerExecutionException(task.Exception.InnerException);
             else
                 throw new CircuitBreakerTimeoutException();
         }
 
 
-        private async Task InvokeAsync(Func<Task> func, TimeSpan timeout)
+        private async Task InvokeAsyncOld(Func<Task> func, TimeSpan timeout)
         {
             if (func == null) throw new ArgumentNullException("func");
 
             await Task.Factory.StartNew(func, CancellationToken.None, TaskCreationOptions.None, _taskScheduler).Unwrap().TimeoutAfter(timeout);
         }
+        private Task InvokeAsync(Func<Task> func, TimeSpan timeout)
+        {
+            if (func == null) throw new ArgumentNullException("func");
 
-        private async Task<T> InvokeAsync<T>(Func<Task<T>> func, TimeSpan timeout)
+            var tcs = new TaskCompletionSource<Task>();
+            var task = Task.Factory.StartNew(func, CancellationToken.None, TaskCreationOptions.None, _taskScheduler);
+
+            Task.Delay(timeout).ContinueWith(ant =>
+            {
+                if (task.IsFaulted)
+                {
+                    tcs.SetException(new CircuitBreakerExecutionException(task.Exception.InnerException));
+                }
+                
+                if (!task.IsCompleted)
+                {
+                    tcs.SetException(new CircuitBreakerTimeoutException());
+                }
+
+                if (task.Result.Status == TaskStatus.RanToCompletion)
+                {
+                    tcs.SetResult(task.Result);
+                }
+                else
+                {
+                    if (task.Result.IsFaulted)
+                    {
+                        tcs.SetException(new CircuitBreakerExecutionException(task.Result.Exception.InnerException));
+                    }
+                    else
+                    {
+                        tcs.SetException(new CircuitBreakerTimeoutException());
+                    }
+                }
+            });
+
+            return tcs.Task;
+        }
+        private async Task<T> InvokeAsyncOld<T>(Func<Task<T>> func, TimeSpan timeout)
         {
             if (func == null) throw new ArgumentNullException("func");
 
             return await Task<Task<T>>.Factory.StartNew(func, CancellationToken.None, TaskCreationOptions.None, _taskScheduler).Unwrap().TimeoutAfter(timeout);
         }
-
-        private T Invoke<T>(Func<T> func, TimeSpan timeout)
+        private Task<T> InvokeAsync<T>(Func<Task<T>> func, TimeSpan timeout)
         {
-
+            return InvokeFirstAsync(func, timeout).Unwrap();
+        }
+        private Task<Task<T>> InvokeFirstAsync<T>(Func<Task<T>> func, TimeSpan timeout)
+        {
             if (func == null) throw new ArgumentNullException("func");
 
-            var tokenSource = new CancellationTokenSource();
+            var tcs = new TaskCompletionSource<Task<T>>();
+            var task = Task.Factory.StartNew(func, CancellationToken.None, TaskCreationOptions.None, _taskScheduler);
+
+            Task.Delay(timeout).ContinueWith(ant =>
+            {
+                if (task.IsFaulted)
+                {
+                    tcs.SetException(new CircuitBreakerExecutionException(task.Exception.InnerException));
+                }
+
+                if (!task.IsCompleted)
+                {
+                    tcs.SetException(new CircuitBreakerTimeoutException());
+                }
+
+                if (task.Result.Status == TaskStatus.RanToCompletion)
+                {
+                    tcs.SetResult(task.Result);
+                }
+                else
+                {
+                    if (task.Result.IsFaulted)
+                    {
+                        tcs.SetException(new CircuitBreakerExecutionException(task.Result.Exception.InnerException));
+                    }
+                    else
+                    {
+                        tcs.SetException(new CircuitBreakerTimeoutException());
+                    }
+                }
+            });
+
+            return tcs.Task;
+        }
+        private T Invoke<T>(Func<T> func, TimeSpan timeout)
+        {
+            if (func == null) throw new ArgumentNullException("func");
 
             Task<T> task = null;
 
             try
             {
-                task = Task<T>.Factory.StartNew(func, tokenSource.Token, TaskCreationOptions.None, _taskScheduler);
+                task = Task<T>.Factory.StartNew(func, CancellationToken.None, TaskCreationOptions.None, _taskScheduler);
 
-                if (task.IsCompleted || task.Wait((int)timeout.TotalMilliseconds, tokenSource.Token))
+                if (task.Wait((int)timeout.TotalMilliseconds))
                 {
                     return task.Result;
                 }
-
-                if (task.Status == TaskStatus.Running)
-                {
-                    tokenSource.Cancel();
-                }
+            }
+            catch (AggregateException e)
+            {
+                throw new CircuitBreakerExecutionException(e.InnerException);
             }
             catch (Exception e)
             {
-                throw new CircuitBreakerOpenException(e);
+                throw new CircuitBreakerExecutionException(e);
             }
 
             if (task.IsFaulted)
-                throw new CircuitBreakerOpenException(task.Exception);
+                throw new CircuitBreakerExecutionException(task.Exception.InnerException);
             else
                 throw new CircuitBreakerTimeoutException();
         }

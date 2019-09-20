@@ -130,7 +130,18 @@ namespace CircuitBreaker.Net.Tests
                     await _sut.ExecuteAsync(_anyAction);
                 }
             }
+            [Fact]
+            public void SuccessfulAllExecution()
+            {
+                var tasks = new Task[100];
 
+                for (var i = 0; i < 100; i++)
+                {
+                    tasks[i] = _sut.ExecuteAsync(_anyAction);
+                }
+
+                Task.WaitAll(tasks);
+            }
             [Fact]
             public async void Timeouts()
             {
@@ -177,6 +188,19 @@ namespace CircuitBreaker.Net.Tests
                 {
                     await _sut.ExecuteAsync(_anyAction);
                 }
+            }
+
+            [Fact]
+            public void SuccessfulAllExecution()
+            {
+                var tasks = new Task[100];
+
+                for (var i = 0; i < 100; i++)
+                {
+                    tasks[i] = _sut.ExecuteAsync(_anyAction);
+                }
+
+                Task.WaitAll(tasks);
             }
 
             [Fact]
